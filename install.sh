@@ -13,6 +13,11 @@ set -eu
 
 BASE="${DIFF_BITS_BASE_URL:-https://bits.the-diff.com}"
 BASE="${BASE%/}"
+# The client code is fetched from a PINNED commit/tag on GitHub — not from the
+# website — so what you run matches the public, auditable repo exactly. GH_REF
+# is stamped at release time; bits.the-diff.com/install.sh redirects here.
+GH_REF="client-v0.1.5"
+GH_RAW="https://raw.githubusercontent.com/jaryd-hermann/diff-bits-client/${GH_REF}"
 REF="${DIFF_BITS_REF:-}"          # install source/campaign (the /install.sh route may inject this)
 DIR="${DIFF_BITS_DIR:-$HOME/.the-diff/bits}"
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
@@ -41,9 +46,9 @@ fi
 # ── 2. Create dir, download client, generate install_id ────────────────────
 mkdir -p "$DIR"
 
-say "  → downloading client (bits.mjs)…"
-if ! curl -fsSL "$BASE/client/bits.mjs" -o "$DIR/bits.mjs.new"; then
-  die "Failed to download the client from $BASE/client/bits.mjs"
+say "  → downloading client (bits.mjs) from the pinned GitHub commit…"
+if ! curl -fsSL "$GH_RAW/bits.mjs" -o "$DIR/bits.mjs.new"; then
+  die "Failed to download the client from $GH_RAW/bits.mjs"
 fi
 # Sanity check it's the real script before swapping it in.
 if ! head -n 5 "$DIR/bits.mjs.new" | grep -q "The Diff Bits"; then
