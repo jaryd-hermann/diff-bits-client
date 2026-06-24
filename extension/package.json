@@ -1,0 +1,72 @@
+{
+  "name": "diff-bits",
+  "displayName": "The Diff Bits",
+  "description": "Bite-size tech & world news in your editor while the agent works.",
+  "version": "0.1.1",
+  "publisher": "the-diff",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "icon": "media/diff-logo.png",
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "diffBits",
+          "title": "Diff Bits",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "diffBits": [
+        {
+          "id": "diffBits.feed",
+          "name": "Bits",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "diffBits.openCurrent",
+        "title": "Diff Bits: Open the current bit"
+      },
+      {
+        "command": "diffBits.next",
+        "title": "Diff Bits: Show next bit"
+      },
+      {
+        "command": "diffBits.show",
+        "title": "Diff Bits: Open the Bits panel"
+      }
+    ],
+    "configuration": {
+      "title": "Diff Bits",
+      "properties": {
+        "diffBits.baseUrl": {
+          "type": "string",
+          "default": "https://bits.the-diff.com",
+          "description": "Backend origin for the feed and tracking endpoints."
+        },
+        "diffBits.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a rotating bit in the status bar."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5"
+  }
+}
