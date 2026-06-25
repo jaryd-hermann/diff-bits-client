@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 
 // ── Config ────────────────────────────────────────────────────────────────
-const CLIENT_VERSION = "0.1.8";
+const CLIENT_VERSION = "0.1.9";
 const DEFAULT_BASE = "https://bits.the-diff.com";
 // DIFF_BITS_BASE_URL / DIFF_BITS_DIR let the test harness point elsewhere.
 const BASE = (process.env.DIFF_BITS_BASE_URL || DEFAULT_BASE).replace(/\/$/, "");
@@ -45,7 +45,7 @@ const MAX_QUEUE = 500; // cap pending events so an offline client can't grow unb
 const LIVE_GAP_MS = 12000; // gap larger than this => the session paused (closed/slept); must exceed statusLine refreshInterval (8s) so idle heartbeats still chain
 const MAX_COLS = 118; // keep the rendered line comfortably under a terminal width
 const MIN_BIT_COLS = 24; // never truncate a bit below this many visible chars
-const MARKER = "❑"; // shadowed square
+const MARKER = "✱"; // heavy asterisk
 
 const DEFAULT_SETTINGS = {
   // dwell_ms: minimum on-screen time a selection must accrue before it (a)
@@ -77,8 +77,8 @@ const underline = (s) =>
 // Sponsored-content disclosure tag (brand orange). Kept short + always shown
 // for sponsor bits so the placement is clearly labeled.
 const orange = (s) => (useColor ? `${ESC}[38;2;232;161;60m${s}${ESC}[39m` : s);
-// Brand purple — used for the ❑ marker bullet.
-const purple = (s) => (useColor ? `${ESC}[38;2;107;77;199m${s}${ESC}[39m` : s);
+// Brand lavender (#C9A6F5) — used for the ✱ marker bullet.
+const lavender = (s) => (useColor ? `${ESC}[38;2;201;166;245m${s}${ESC}[39m` : s);
 
 // ── Tiny safe IO helpers (never throw) ──────────────────────────────────────
 function readJson(file) {
@@ -366,15 +366,22 @@ function hotPath() {
     const head = prefix ? `${prefix} · ` : "";
     const sponsored = !!current.sponsored || current.kind === "sponsor";
     const url = `${BASE}/c/${current.id}?i=${installId}`;
-    // Sponsor bits lead with a clickable "Learn More ⬈" CTA (orange, links to
-    // the sponsor). Regular bits show no tag.
+    const marker = `${lavender(MARKER)} `; // ✱ bullet (lavender), before the bit
+    // Trailing link affordance: sponsor bits get an orange "Learn More ⬈" CTA
+    // AFTER the text; regular bits get a green ⬈ tucked onto the end of the
+    // underlined link. Both sit at the end and signal "this is clickable".
     const cta = "Learn More ⬈";
-    const tagVisible = sponsored ? `${cta} ` : "";
-    const tag = sponsored ? `${osc8(url, orange(cta))} ` : "";
-    const used = head.length + tagVisible.length + 2; // tag + marker + space
+    const trailingCols = sponsored ? cta.length + 2 : 2; // +separator/space
+    const used = head.length + 2 + trailingCols; // marker(✱)+space + trailing
     const budget = Math.max(MIN_BIT_COLS, MAX_COLS - used);
     const text = truncate(String(current.text || ""), budget);
-    line = `${head}${tag}${purple(MARKER)} ${osc8(url, underline(text))}`;
+    if (sponsored) {
+      const body = osc8(url, underline(text));
+      line = `${head}${marker}${body}  ${osc8(url, orange(cta))}`;
+    } else {
+      const body = osc8(url, underline(`${text} ⬈`));
+      line = `${head}${marker}${body}`;
+    }
   } else {
     // No bits yet (fresh install before first sync). Show the useful prefix so
     // we never blank a line the user was relying on.
