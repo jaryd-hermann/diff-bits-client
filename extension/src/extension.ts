@@ -10,7 +10,7 @@ import { randomUUID } from "crypto";
 // Supabase backend via /api/track and /c/[bitId]. Surface = "vscode".
 // ===========================================================================
 
-const CLIENT_VERSION = "0.2.0";
+const CLIENT_VERSION = "0.2.2";
 
 interface Bit {
   id: string;
@@ -20,6 +20,7 @@ interface Bit {
   kind?: string;
   image_url?: string | null;
   sponsored?: boolean;
+  cta?: string | null;
 }
 
 function isSponsored(bit?: Bit): boolean {
@@ -372,6 +373,7 @@ class BitsViewProvider implements vscode.WebviewViewProvider {
       hasUrl: !!bit?.url,
       image: bit?.image_url || null,
       sponsored: isSponsored(bit),
+      cta: bit?.cta || null,
     });
   }
 
@@ -438,6 +440,7 @@ class BitsViewProvider implements vscode.WebviewViewProvider {
       if (m.text) { headline.textContent = m.text; headline.classList.remove('empty'); }
       else { headline.textContent = 'Loading bits…'; headline.classList.add('empty'); }
       cta.style.display = m.hasUrl ? 'inline-block' : 'none';
+      cta.textContent = m.cta || 'Read →';
       logo.src = m.image || defaultLogo;
       sponsored.style.display = m.sponsored ? 'inline-block' : 'none';
     }

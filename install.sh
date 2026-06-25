@@ -16,7 +16,7 @@ BASE="${BASE%/}"
 # The client code is fetched from a PINNED commit/tag on GitHub — not from the
 # website — so what you run matches the public, auditable repo exactly. GH_REF
 # is stamped at release time; bits.the-diff.com/install.sh redirects here.
-GH_REF="client-v0.1.9"
+GH_REF="client-v0.1.10"
 GH_RAW="https://raw.githubusercontent.com/jaryd-hermann/diff-bits-client/${GH_REF}"
 REF="${DIFF_BITS_REF:-}"          # install source/campaign (the /install.sh route may inject this)
 DIR="${DIFF_BITS_DIR:-$HOME/.the-diff/bits}"

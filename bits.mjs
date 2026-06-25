@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 
 // ── Config ────────────────────────────────────────────────────────────────
-const CLIENT_VERSION = "0.1.9";
+const CLIENT_VERSION = "0.1.10";
 const DEFAULT_BASE = "https://bits.the-diff.com";
 // DIFF_BITS_BASE_URL / DIFF_BITS_DIR let the test harness point elsewhere.
 const BASE = (process.env.DIFF_BITS_BASE_URL || DEFAULT_BASE).replace(/\/$/, "");
@@ -367,10 +367,11 @@ function hotPath() {
     const sponsored = !!current.sponsored || current.kind === "sponsor";
     const url = `${BASE}/c/${current.id}?i=${installId}`;
     const marker = `${lavender(MARKER)} `; // ✱ bullet (lavender), before the bit
-    // Trailing link affordance: sponsor bits get an orange "Learn More ⬈" CTA
-    // AFTER the text; regular bits get a green ⬈ tucked onto the end of the
-    // underlined link. Both sit at the end and signal "this is clickable".
-    const cta = "Learn More ⬈";
+    // Trailing link affordance: sponsor bits get an orange CTA AFTER the text
+    // (a custom per-bit label when set, else "Learn More"); regular bits get a
+    // green ⬈ tucked onto the end of the underlined link. Both sit at the end
+    // and signal "this is clickable".
+    const cta = current.cta ? `${current.cta} ⬈` : "Learn More ⬈";
     const trailingCols = sponsored ? cta.length + 2 : 2; // +separator/space
     const used = head.length + 2 + trailingCols; // marker(✱)+space + trailing
     const budget = Math.max(MIN_BIT_COLS, MAX_COLS - used);
