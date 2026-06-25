@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 
 // ── Config ────────────────────────────────────────────────────────────────
-const CLIENT_VERSION = "0.1.7";
+const CLIENT_VERSION = "0.1.8";
 const DEFAULT_BASE = "https://bits.the-diff.com";
 // DIFF_BITS_BASE_URL / DIFF_BITS_DIR let the test harness point elsewhere.
 const BASE = (process.env.DIFF_BITS_BASE_URL || DEFAULT_BASE).replace(/\/$/, "");
@@ -42,7 +42,7 @@ const STATE_FILE = path.join(DIR, "state.json");
 const TOPICS_FILE = path.join(DIR, "topics"); // comma-separated; written at install
 
 const MAX_QUEUE = 500; // cap pending events so an offline client can't grow unbounded
-const LIVE_GAP_MS = 5000; // gap larger than this => the wait wasn't continuous
+const LIVE_GAP_MS = 12000; // gap larger than this => the session paused (closed/slept); must exceed statusLine refreshInterval (8s) so idle heartbeats still chain
 const MAX_COLS = 118; // keep the rendered line comfortably under a terminal width
 const MIN_BIT_COLS = 24; // never truncate a bit below this many visible chars
 const MARKER = "❑"; // shadowed square
@@ -137,34 +137,10 @@ function freshState() {
     bit_total_ms: 0, // attested on-screen time accrued for the current selection
     seg_accrued_ms: 0, // attested time in the current continuous segment (resets on gap)
     last_tick_at: null,
-    last_fp: null, // last activity fingerprint — credit only ticks where work happened
     queue: [], // FIFO of pending {type, bit_id, ts, dwell_ms?}
     cc_version: null,
     shown_count: 0, // total bits shown — drives the 1-in-5 sponsor cadence
   };
-}
-
-// Activity fingerprint: a cheap signal for "the agent actually did work since
-// the last tick", read from session fields that advance as Claude Code runs
-// (cost, tokens, context %). With a statusLine `refreshInterval` set, the line
-// re-runs on a wall-clock timer even while idle — so "the command ran" no
-// longer implies "the user was actively working". We credit on-screen time
-// toward an impression ONLY when this fingerprint changes: idle heartbeats
-// still rotate the line (good UX) but never inflate impressions (honest
-// counting). Returns null when the session exposes none of these fields, in
-// which case we fall back to the time-gap rule alone.
-function activityFingerprint(session) {
-  const cw = session?.context_window;
-  const parts = [
-    session?.cost?.total_cost_usd,
-    session?.cost?.total_api_duration_ms,
-    session?.cost?.total_lines_added,
-    session?.cost?.total_lines_removed,
-    cw?.total_input_tokens,
-    cw?.total_output_tokens,
-    cw?.used_percentage,
-  ].filter((v) => v !== undefined && v !== null);
-  return parts.length ? parts.join("|") : null;
 }
 
 // Begin showing `bit`: it's now the current selection with a fresh clock.
@@ -349,27 +325,27 @@ function hotPath() {
   //  • rotation is WALL-CLOCK: the line changes ~every max_dwell_ms since the
   //    bit first appeared, so it visibly cycles while Claude Code is
   //    re-rendering during a task — regardless of how bursty the renders are.
-  const fp = activityFingerprint(session);
-  // "active" => the agent did work since the last tick. A null fingerprint
-  // means the session exposes no usable signal, so we don't block on it.
-  const active = fp == null ? true : fp !== state.last_fp;
   if (current) {
     const elapsed = state.last_tick_at ? now - state.last_tick_at : Infinity;
+    // "continuous" = the session is live and ticking (event re-renders or the
+    // refreshInterval heartbeat). LIVE_GAP_MS sits above refreshInterval so
+    // normal idle heartbeats chain together; only a real discontinuity (the
+    // session was closed, or the machine slept) exceeds it and is dropped, so
+    // we never credit a giant unattended span in one go.
     const continuous = elapsed >= 0 && elapsed <= LIVE_GAP_MS;
 
     if (state.bit_started_at == null) {
       // First time we're showing this selection (e.g. migrated/old state).
       startSelection(state, current, now);
     } else {
-      // Credit on-screen time only when it was both CONTINUOUS (no gap) and
-      // ACTIVE (the agent worked). This keeps impressions honest under a
-      // statusLine refreshInterval, which would otherwise tick — and falsely
-      // accrue time — while the user is idle.
-      if (continuous && active) {
+      // Credit every continuous tick — including idle refreshInterval ticks
+      // while you read output. Impression = time the bit is on a live session's
+      // screen, not only time the agent is actively working.
+      if (continuous) {
         state.bit_total_ms += elapsed;
         state.seg_accrued_ms += elapsed;
-      } else if (!continuous) {
-        state.seg_accrued_ms = 0; // burst ended; impression time can't span a gap
+      } else {
+        state.seg_accrued_ms = 0; // session resumed after a gap; can't span it
       }
       // Rotate purely on wall-clock time since this bit became current.
       if (now - (state.bit_started_at || now) >= settings.max_dwell_ms) {
@@ -382,7 +358,6 @@ function hotPath() {
   }
 
   state.last_tick_at = now;
-  state.last_fp = fp;
   writeJsonAtomic(STATE_FILE, state);
 
   // Compose the line.
