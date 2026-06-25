@@ -154,15 +154,15 @@ function freshState() {
 // counting). Returns null when the session exposes none of these fields, in
 // which case we fall back to the time-gap rule alone.
 function activityFingerprint(session) {
+  const cw = session?.context_window;
   const parts = [
     session?.cost?.total_cost_usd,
     session?.cost?.total_api_duration_ms,
     session?.cost?.total_lines_added,
     session?.cost?.total_lines_removed,
-    session?.context?.used_percent,
-    session?.context?.percent_used,
-    session?.context_window?.used_percent,
-    session?.cost?.context_used_percent,
+    cw?.total_input_tokens,
+    cw?.total_output_tokens,
+    cw?.used_percentage,
   ].filter((v) => v !== undefined && v !== null);
   return parts.length ? parts.join("|") : null;
 }
@@ -234,10 +234,10 @@ function gitBranch(session) {
 // omit it rather than show something wrong.
 function ctxPct(session) {
   const cands = [
-    session?.context?.used_percent,
+    session?.context_window?.used_percentage, // current Claude Code schema
+    session?.context?.used_percent, // legacy fallbacks (older versions)
     session?.context?.percent_used,
     session?.context_window?.used_percent,
-    session?.cost?.context_used_percent,
   ];
   for (const c of cands) {
     const n = Number(c);
