@@ -16,7 +16,7 @@ BASE="${BASE%/}"
 # The client code is fetched from a PINNED commit/tag on GitHub — not from the
 # website — so what you run matches the public, auditable repo exactly. GH_REF
 # is stamped at release time; bits.the-diff.com/install.sh redirects here.
-GH_REF="client-v0.1.6"
+GH_REF="client-v0.1.7"
 GH_RAW="https://raw.githubusercontent.com/jaryd-hermann/diff-bits-client/${GH_REF}"
 REF="${DIFF_BITS_REF:-}"          # install source/campaign (the /install.sh route may inject this)
 DIR="${DIFF_BITS_DIR:-$HOME/.the-diff/bits}"
@@ -78,7 +78,11 @@ MERGE_JS="$DIR/.merge.mjs"
 cat > "$MERGE_JS" <<'NODE'
 import fs from "node:fs";
 const [settingsPath, command] = [process.env.SETTINGS, process.env.COMMAND];
-const ours = { type: "command", command, padding: 0 };
+// refreshInterval re-runs the status line every N seconds even while the
+// session is idle, so bits visibly rotate while you read — not only on new
+// messages. bits.mjs only credits impressions for ticks where the agent
+// actually worked, so idle rotation never inflates counts.
+const ours = { type: "command", command, padding: 0, refreshInterval: 8 };
 const isOurs = (sl) =>
   sl && typeof sl === "object" && typeof sl.command === "string" &&
   sl.command.includes(".the-diff/bits/bits.mjs");

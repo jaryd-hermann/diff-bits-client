@@ -110,7 +110,7 @@ console.log("\n[1] renders a bit with OSC 8 link + marker");
   writeCache(dir, BITS);
   const { stdout, status } = runHot(dir, { stdin: JSON.stringify({ version: "1.2.3" }) });
   ok("exit 0", status === 0, `status=${status}`);
-  ok("contains marker ◆", stdout.includes("◆"));
+  ok("contains marker ❑", stdout.includes("❑"));
   ok("contains OSC 8 click url with install id", /\]8;;http.*\/c\/[a-f0-9-]+\?i=11111111-/.test(stdout));
   ok("only one line", stdout.split("\n").filter(Boolean).length === 1);
 }
@@ -209,7 +209,7 @@ console.log("\n[6] fail-safe: malformed inputs never crash");
   writeCache(dir, BITS);
   let r = runHot(dir, { stdin: "this is not json{" });
   ok("bad stdin exits 0", r.status === 0);
-  ok("bad stdin still renders", r.stdout.includes("◆"));
+  ok("bad stdin still renders", r.stdout.includes("❑"));
 
   // corrupt cache.json
   dir = tmpDir();
@@ -225,7 +225,7 @@ console.log("\n[6] fail-safe: malformed inputs never crash");
   fs.writeFileSync(path.join(dir, "state.json"), "<<<corrupt>>>");
   r = runHot(dir, { stdin: "{}" });
   ok("corrupt state exits 0", r.status === 0);
-  ok("corrupt state recovers and renders", r.stdout.includes("◆"));
+  ok("corrupt state recovers and renders", r.stdout.includes("❑"));
 
   // empty stdin
   dir = tmpDir();

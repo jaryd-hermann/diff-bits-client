@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 
 // ── Config ────────────────────────────────────────────────────────────────
-const CLIENT_VERSION = "0.1.6";
+const CLIENT_VERSION = "0.1.7";
 const DEFAULT_BASE = "https://bits.the-diff.com";
 // DIFF_BITS_BASE_URL / DIFF_BITS_DIR let the test harness point elsewhere.
 const BASE = (process.env.DIFF_BITS_BASE_URL || DEFAULT_BASE).replace(/\/$/, "");
@@ -45,7 +45,7 @@ const MAX_QUEUE = 500; // cap pending events so an offline client can't grow unb
 const LIVE_GAP_MS = 5000; // gap larger than this => the wait wasn't continuous
 const MAX_COLS = 118; // keep the rendered line comfortably under a terminal width
 const MIN_BIT_COLS = 24; // never truncate a bit below this many visible chars
-const MARKER = "◆"; // ◆
+const MARKER = "❑"; // shadowed square
 
 const DEFAULT_SETTINGS = {
   // dwell_ms: minimum on-screen time a selection must accrue before it (a)
@@ -77,6 +77,8 @@ const underline = (s) =>
 // Sponsored-content disclosure tag (brand orange). Kept short + always shown
 // for sponsor bits so the placement is clearly labeled.
 const orange = (s) => (useColor ? `${ESC}[38;2;232;161;60m${s}${ESC}[39m` : s);
+// Brand purple — used for the ❑ marker bullet.
+const purple = (s) => (useColor ? `${ESC}[38;2;107;77;199m${s}${ESC}[39m` : s);
 
 // ── Tiny safe IO helpers (never throw) ──────────────────────────────────────
 function readJson(file) {
@@ -135,10 +137,34 @@ function freshState() {
     bit_total_ms: 0, // attested on-screen time accrued for the current selection
     seg_accrued_ms: 0, // attested time in the current continuous segment (resets on gap)
     last_tick_at: null,
+    last_fp: null, // last activity fingerprint — credit only ticks where work happened
     queue: [], // FIFO of pending {type, bit_id, ts, dwell_ms?}
     cc_version: null,
     shown_count: 0, // total bits shown — drives the 1-in-5 sponsor cadence
   };
+}
+
+// Activity fingerprint: a cheap signal for "the agent actually did work since
+// the last tick", read from session fields that advance as Claude Code runs
+// (cost, tokens, context %). With a statusLine `refreshInterval` set, the line
+// re-runs on a wall-clock timer even while idle — so "the command ran" no
+// longer implies "the user was actively working". We credit on-screen time
+// toward an impression ONLY when this fingerprint changes: idle heartbeats
+// still rotate the line (good UX) but never inflate impressions (honest
+// counting). Returns null when the session exposes none of these fields, in
+// which case we fall back to the time-gap rule alone.
+function activityFingerprint(session) {
+  const parts = [
+    session?.cost?.total_cost_usd,
+    session?.cost?.total_api_duration_ms,
+    session?.cost?.total_lines_added,
+    session?.cost?.total_lines_removed,
+    session?.context?.used_percent,
+    session?.context?.percent_used,
+    session?.context_window?.used_percent,
+    session?.cost?.context_used_percent,
+  ].filter((v) => v !== undefined && v !== null);
+  return parts.length ? parts.join("|") : null;
 }
 
 // Begin showing `bit`: it's now the current selection with a fresh clock.
@@ -323,6 +349,10 @@ function hotPath() {
   //  • rotation is WALL-CLOCK: the line changes ~every max_dwell_ms since the
   //    bit first appeared, so it visibly cycles while Claude Code is
   //    re-rendering during a task — regardless of how bursty the renders are.
+  const fp = activityFingerprint(session);
+  // "active" => the agent did work since the last tick. A null fingerprint
+  // means the session exposes no usable signal, so we don't block on it.
+  const active = fp == null ? true : fp !== state.last_fp;
   if (current) {
     const elapsed = state.last_tick_at ? now - state.last_tick_at : Infinity;
     const continuous = elapsed >= 0 && elapsed <= LIVE_GAP_MS;
@@ -331,11 +361,14 @@ function hotPath() {
       // First time we're showing this selection (e.g. migrated/old state).
       startSelection(state, current, now);
     } else {
-      // Credit only continuous on-screen time toward the impression.
-      if (continuous) {
+      // Credit on-screen time only when it was both CONTINUOUS (no gap) and
+      // ACTIVE (the agent worked). This keeps impressions honest under a
+      // statusLine refreshInterval, which would otherwise tick — and falsely
+      // accrue time — while the user is idle.
+      if (continuous && active) {
         state.bit_total_ms += elapsed;
         state.seg_accrued_ms += elapsed;
-      } else {
+      } else if (!continuous) {
         state.seg_accrued_ms = 0; // burst ended; impression time can't span a gap
       }
       // Rotate purely on wall-clock time since this bit became current.
@@ -349,6 +382,7 @@ function hotPath() {
   }
 
   state.last_tick_at = now;
+  state.last_fp = fp;
   writeJsonAtomic(STATE_FILE, state);
 
   // Compose the line.
@@ -356,13 +390,16 @@ function hotPath() {
   if (current) {
     const head = prefix ? `${prefix} · ` : "";
     const sponsored = !!current.sponsored || current.kind === "sponsor";
-    const tagVisible = sponsored ? "Sponsored " : "";
-    const tag = sponsored ? `${orange("Sponsored")} ` : "";
+    const url = `${BASE}/c/${current.id}?i=${installId}`;
+    // Sponsor bits lead with a clickable "Learn More ⬈" CTA (orange, links to
+    // the sponsor). Regular bits show no tag.
+    const cta = "Learn More ⬈";
+    const tagVisible = sponsored ? `${cta} ` : "";
+    const tag = sponsored ? `${osc8(url, orange(cta))} ` : "";
     const used = head.length + tagVisible.length + 2; // tag + marker + space
     const budget = Math.max(MIN_BIT_COLS, MAX_COLS - used);
     const text = truncate(String(current.text || ""), budget);
-    const url = `${BASE}/c/${current.id}?i=${installId}`;
-    line = `${head}${tag}${green(MARKER)} ${osc8(url, underline(text))}`;
+    line = `${head}${tag}${purple(MARKER)} ${osc8(url, underline(text))}`;
   } else {
     // No bits yet (fresh install before first sync). Show the useful prefix so
     // we never blank a line the user was relying on.
