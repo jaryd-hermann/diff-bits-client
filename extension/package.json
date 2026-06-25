@@ -2,7 +2,7 @@
   "name": "diff-bits",
   "displayName": "The Diff Bits",
   "description": "Bite-size tech & world news in your editor while the agent works.",
-  "version": "0.1.1",
+  "version": "0.2.1",
   "publisher": "the-diff",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],

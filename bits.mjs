@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 
 // ── Config ────────────────────────────────────────────────────────────────
-const CLIENT_VERSION = "0.1.5";
+const CLIENT_VERSION = "0.1.6";
 const DEFAULT_BASE = "https://bits.the-diff.com";
 // DIFF_BITS_BASE_URL / DIFF_BITS_DIR let the test harness point elsewhere.
 const BASE = (process.env.DIFF_BITS_BASE_URL || DEFAULT_BASE).replace(/\/$/, "");
@@ -137,6 +137,7 @@ function freshState() {
     last_tick_at: null,
     queue: [], // FIFO of pending {type, bit_id, ts, dwell_ms?}
     cc_version: null,
+    shown_count: 0, // total bits shown — drives the 1-in-5 sponsor cadence
   };
 }
 
@@ -146,6 +147,7 @@ function startSelection(state, bit, now) {
   state.bit_started_at = now;
   state.bit_total_ms = 0;
   state.seg_accrued_ms = 0;
+  state.shown_count = (state.shown_count || 0) + 1;
 }
 
 // A selection is over (rotating away, or the bit vanished from the feed). Emit
@@ -240,6 +242,24 @@ function pickWeighted(bits, avoidId) {
   return pool[pool.length - 1];
 }
 
+const isSponsorBit = (b) => !!b && (b.sponsored === true || b.kind === "sponsor");
+
+// Pick the next bit to show, enforcing a 1-in-5 sponsor cadence: every 5th bit
+// shown is a sponsor (when one is available); the other four are non-sponsor.
+// `nextIndex` is the 0-based position of the bit about to be shown. Degrades
+// gracefully when only one category exists.
+function pickNext(bits, avoidId, nextIndex) {
+  if (!Array.isArray(bits) || bits.length === 0) return null;
+  const sponsors = bits.filter(isSponsorBit);
+  const others = bits.filter((b) => !isSponsorBit(b));
+  const wantSponsor = sponsors.length > 0 && nextIndex % 5 === 4;
+  if (wantSponsor) {
+    return pickWeighted(sponsors, avoidId) || pickWeighted(bits, avoidId);
+  }
+  if (others.length) return pickWeighted(others, avoidId);
+  return pickWeighted(bits, avoidId); // sponsors-only feed
+}
+
 // ── Rendering ───────────────────────────────────────────────────────────────
 function osc8(url, text) {
   return `]8;;${url}\\${text}]8;;\\`;
@@ -293,7 +313,7 @@ function hotPath() {
     state.seg_accrued_ms = 0;
   }
   if (!current) {
-    current = pickWeighted(bits, state.last_bit_id);
+    current = pickNext(bits, state.last_bit_id, state.shown_count || 0);
     if (current) startSelection(state, current, now);
   }
 
@@ -322,7 +342,7 @@ function hotPath() {
       if (now - (state.bit_started_at || now) >= settings.max_dwell_ms) {
         finalizeSelection(state, settings, now);
         state.last_bit_id = current.id;
-        current = pickWeighted(bits, current.id) || current;
+        current = pickNext(bits, current.id, state.shown_count || 0) || current;
         startSelection(state, current, now);
       }
     }

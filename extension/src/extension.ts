@@ -10,7 +10,7 @@ import { randomUUID } from "crypto";
 // Supabase backend via /api/track and /c/[bitId]. Surface = "vscode".
 // ===========================================================================
 
-const CLIENT_VERSION = "0.1.0";
+const CLIENT_VERSION = "0.2.0";
 
 interface Bit {
   id: string;
@@ -37,6 +37,16 @@ const DEFAULT_SETTINGS: Settings = {
   refresh_min: 30,
   flush_threshold: 20,
 };
+
+// Presence gating. A bit only accrues on-screen time while the editor window is
+// focused AND the user is plausibly present — interacted within IDLE_LIMIT_MS,
+// OR has a terminal open (the agent is likely working there). This stops the
+// phantom-impression bug (a backgrounded or slept editor logging a rotation
+// forever) while staying generous for the agent-in-terminal workflow. Focus +
+// the OS suspending timers on sleep are the backstops against an abandoned
+// but awake editor.
+const TICK_MS = 1000;
+const IDLE_LIMIT_MS = 120_000;
 
 function baseUrl(): string {
   const u = vscode.workspace
@@ -106,14 +116,22 @@ class FeedController {
   private bits: Bit[] = [];
   private settings: Settings = DEFAULT_SETTINGS;
   private index = 0;
+  private rotations = 0; // total rotations — drives the 1-in-5 sponsor cadence
   private lastId: string | null = null;
   private installId: string;
-  private displaySeq = 0;
   private queue: { bit_id: string; shown_at: string; dwell_ms: number }[] = [];
-  private rotateTimer?: NodeJS.Timeout;
+  private tickTimer?: NodeJS.Timeout;
   private refreshTimer?: NodeJS.Timeout;
   private flushTimer?: NodeJS.Timeout;
   private listeners: (() => void)[] = [];
+  private disposables: vscode.Disposable[] = [];
+
+  // Presence + dwell tracking for the current selection.
+  private started = false;
+  private liveMs = 0; // continuous live (focused + active) on-screen time accrued
+  private shownAtIso = ""; // ISO timestamp of when this selection became current
+  private focused = true;
+  private lastActivityAt = 0;
 
   constructor(private context: vscode.ExtensionContext) {
     let id = context.globalState.get<string>("diffBits.installId");
@@ -137,56 +155,109 @@ class FeedController {
 
   async start() {
     await this.register();
+    this.installActivityWatchers();
     await this.refresh();
     this.flushTimer = setInterval(() => this.flush(), 30_000);
     this.refreshTimer = setInterval(
       () => this.refresh(),
       this.settings.refresh_min * 60_000,
     );
-    this.scheduleRotate();
+    this.tickTimer = setInterval(() => this.tick(), TICK_MS);
   }
 
-  private scheduleRotate() {
-    if (this.rotateTimer) clearTimeout(this.rotateTimer);
-    this.rotateTimer = setTimeout(
-      () => this.next(),
-      this.settings.max_dwell_ms,
+  // Track window focus + user activity so we only credit time the user is
+  // plausibly present. Disposed with the controller.
+  private bump = () => {
+    this.lastActivityAt = Date.now();
+  };
+  private installActivityWatchers() {
+    this.focused = vscode.window.state.focused;
+    this.bump();
+    this.disposables.push(
+      vscode.window.onDidChangeWindowState((s) => {
+        this.focused = s.focused;
+        if (s.focused) this.bump();
+      }),
+      vscode.window.onDidChangeTextEditorSelection(this.bump),
+      vscode.window.onDidChangeActiveTextEditor(this.bump),
+      vscode.workspace.onDidChangeTextDocument(this.bump),
+      vscode.window.onDidChangeActiveTerminal(this.bump),
+      vscode.window.onDidOpenTerminal(this.bump),
+      vscode.window.onDidCloseTerminal(this.bump),
     );
   }
 
-  next() {
-    if (this.bits.length > 1) {
-      let i = this.index;
-      // advance, avoiding an immediate repeat
-      for (let n = 0; n < 5; n++) {
-        i = (i + 1) % this.bits.length;
-        if (this.bits[i].id !== this.lastId) break;
-      }
-      this.index = i;
-    }
-    this.show();
+  private isLive(now: number): boolean {
+    if (!this.focused) return false;
+    return (
+      now - this.lastActivityAt <= IDLE_LIMIT_MS ||
+      vscode.window.terminals.length > 0
+    );
   }
 
-  /** Show the current bit: notify UI + schedule an impression past dwell. */
-  private show() {
-    const bit = this.current();
-    if (!bit) return;
-    this.lastId = bit.id;
-    const seq = ++this.displaySeq;
-    const shownAt = new Date().toISOString();
+  // Heartbeat: accrue live on-screen time for the current bit, and rotate after
+  // max_dwell of *viewed* time. While away (unfocused or idle) we freeze — no
+  // accrual, no rotation — so nothing is counted that the user didn't see.
+  private tick() {
+    const now = Date.now();
+    if (!this.started || !this.current()) return;
+    if (!this.isLive(now)) return;
+    this.liveMs += TICK_MS;
+    if (this.liveMs >= this.settings.max_dwell_ms) this.next();
+  }
+
+  // Begin showing the bit at the current index with a fresh clock.
+  private startSelection() {
+    this.lastId = this.current()?.id ?? this.lastId;
+    this.liveMs = 0;
+    this.shownAtIso = new Date().toISOString();
     this.emit();
-    // Count one impression if it stays shown past the dwell threshold.
-    setTimeout(() => {
-      if (seq === this.displaySeq) {
-        this.queue.push({
-          bit_id: bit.id,
-          shown_at: shownAt,
-          dwell_ms: this.settings.dwell_ms,
-        });
-        if (this.queue.length >= this.settings.flush_threshold) this.flush();
+  }
+
+  // Emit exactly ONE impression for the selection that's ending, carrying its
+  // TOTAL live on-screen time — only if it was actually viewed past the dwell
+  // threshold. Idle/unfocused time never accrued, so an untended editor counts
+  // for nothing.
+  private finalizeSelection() {
+    const bit = this.current();
+    if (bit && this.liveMs >= this.settings.dwell_ms) {
+      this.queue.push({
+        bit_id: bit.id,
+        shown_at: this.shownAtIso,
+        dwell_ms: Math.round(this.liveMs),
+      });
+      if (this.queue.length >= this.settings.flush_threshold) this.flush();
+    }
+  }
+
+  next() {
+    this.finalizeSelection();
+    this.advance();
+    this.startSelection();
+  }
+
+  // Advance the index, enforcing a 1-in-5 sponsor cadence: every 5th rotation
+  // lands on a sponsor (when one exists); the other four prefer non-sponsors.
+  // Falls back gracefully when only one category is present.
+  private advance() {
+    const n = this.bits.length;
+    if (n <= 1) return;
+    this.rotations++;
+    const wantSponsor =
+      this.bits.some(isSponsored) && this.rotations % 5 === 0;
+    const matches = (b: Bit) =>
+      wantSponsor ? isSponsored(b) : !isSponsored(b);
+    const scan = (pred: (b: Bit) => boolean): number => {
+      for (let k = 1; k <= n; k++) {
+        const i = (this.index + k) % n;
+        if (pred(this.bits[i])) return i;
       }
-    }, this.settings.dwell_ms);
-    this.scheduleRotate();
+      return -1;
+    };
+    let i = scan((b) => matches(b) && b.id !== this.lastId);
+    if (i === -1) i = scan((b) => b.id !== this.lastId); // any non-repeat
+    if (i === -1) i = (this.index + 1) % n; // last resort
+    this.index = i;
   }
 
   openCurrent() {
@@ -223,11 +294,21 @@ class FeedController {
       if (!res.ok) return;
       const feed = (await res.json()) as { bits?: Bit[]; settings?: Settings };
       if (Array.isArray(feed.bits)) {
+        const prevId = this.current()?.id ?? null;
         this.bits = feed.bits;
         this.settings = { ...DEFAULT_SETTINGS, ...(feed.settings ?? {}) };
         if (this.index >= this.bits.length) this.index = 0;
-        if (this.displaySeq === 0) this.show();
-        else this.emit();
+        if (!this.started && this.bits.length) {
+          this.started = true;
+          this.startSelection();
+        } else if (this.current()?.id !== prevId) {
+          // The bit we were showing changed identity under us — finalize the
+          // old selection (crediting its viewed time) before starting fresh.
+          this.finalizeSelection();
+          this.startSelection();
+        } else {
+          this.emit();
+        }
       }
     } catch {
       /* keep current bits */
@@ -262,9 +343,11 @@ class FeedController {
   }
 
   dispose() {
-    if (this.rotateTimer) clearTimeout(this.rotateTimer);
+    if (this.tickTimer) clearInterval(this.tickTimer);
     if (this.refreshTimer) clearInterval(this.refreshTimer);
     if (this.flushTimer) clearInterval(this.flushTimer);
+    for (const d of this.disposables) d.dispose();
+    this.finalizeSelection();
     void this.flush();
   }
 }
