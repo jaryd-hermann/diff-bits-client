@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 
 // ── Config ────────────────────────────────────────────────────────────────
-const CLIENT_VERSION = "0.1.10";
+const CLIENT_VERSION = "0.1.11";
 const DEFAULT_BASE = "https://bits.the-diff.com";
 // DIFF_BITS_BASE_URL / DIFF_BITS_DIR let the test harness point elsewhere.
 const BASE = (process.env.DIFF_BITS_BASE_URL || DEFAULT_BASE).replace(/\/$/, "");
@@ -53,8 +53,9 @@ const DEFAULT_SETTINGS = {
   // boundary. Below this, a bit is "not seen enough yet" and is kept.
   dwell_ms: 4000,
   // max_dwell_ms: wall-clock time a bit stays on screen before rotating to the
-  // next one (while Claude Code is re-rendering).
-  max_dwell_ms: 10000,
+  // next one (while Claude Code is re-rendering). Served by the feed, so this
+  // is just the pre-first-sync fallback.
+  max_dwell_ms: 30000,
   refresh_min: 30,
   flush_threshold: 20,
 };
@@ -501,11 +502,67 @@ async function sync() {
   }
 }
 
+// ── Topics subcommand ────────────────────────────────────────────────────────
+// Change your interests after install, without reinstalling:
+//   node bits.mjs --topics            show current selection + options
+//   node bits.mjs --topics ai,tech    set selection (validated)
+//   node bits.mjs --topics all        clear selection (= every topic)
+const TOPIC_SLUGS = [
+  "ai", "tech", "business", "startups",
+  "science", "finance", "politics", "world",
+];
+
+function topicsCmd(arg) {
+  let current = "";
+  try {
+    current = fs.readFileSync(TOPICS_FILE, "utf8").trim();
+  } catch {
+    /* no file yet => all */
+  }
+
+  if (arg == null) {
+    process.stdout.write(`Current topics: ${current || "all"}\n`);
+    process.stdout.write(`Available: ${TOPIC_SLUGS.join(", ")}\n`);
+    process.stdout.write(
+      `Change with: node ~/.the-diff/bits/bits.mjs --topics ai,tech   (or "all")\n`,
+    );
+    return;
+  }
+
+  const raw = String(arg).trim().toLowerCase();
+  const requested = raw.split(/[\s,]+/).filter(Boolean);
+  let topics;
+  if (!raw || raw === "all" || raw === "none") {
+    topics = [];
+  } else {
+    topics = [...new Set(requested)].filter((t) => TOPIC_SLUGS.includes(t));
+    const unknown = requested.filter((t) => !TOPIC_SLUGS.includes(t));
+    if (unknown.length)
+      process.stdout.write(`Ignored unknown topic(s): ${unknown.join(", ")}\n`);
+  }
+
+  try {
+    fs.mkdirSync(DIR, { recursive: true });
+    fs.writeFileSync(TOPICS_FILE, topics.join(","));
+  } catch {
+    process.stdout.write("Could not save topics.\n");
+    return;
+  }
+  process.stdout.write(
+    `Topics set to: ${topics.length ? topics.join(", ") : "all"}\n`,
+  );
+  // Refresh the feed immediately so the new topics take effect right away.
+  spawnSync();
+}
+
 // ── Entry ───────────────────────────────────────────────────────────────────
 (async () => {
   try {
     if (process.argv.includes("--version")) {
       process.stdout.write(CLIENT_VERSION + "\n");
+    } else if (process.argv.includes("--topics")) {
+      const i = process.argv.indexOf("--topics");
+      topicsCmd(process.argv[i + 1]);
     } else if (process.argv.includes("--sync")) {
       await sync();
     } else {

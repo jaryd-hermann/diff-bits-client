@@ -16,7 +16,7 @@ BASE="${BASE%/}"
 # The client code is fetched from a PINNED commit/tag on GitHub — not from the
 # website — so what you run matches the public, auditable repo exactly. GH_REF
 # is stamped at release time; bits.the-diff.com/install.sh redirects here.
-GH_REF="client-v0.1.10"
+GH_REF="client-v0.1.11"
 GH_RAW="https://raw.githubusercontent.com/jaryd-hermann/diff-bits-client/${GH_REF}"
 REF="${DIFF_BITS_REF:-}"          # install source/campaign (the /install.sh route may inject this)
 DIR="${DIFF_BITS_DIR:-$HOME/.the-diff/bits}"
@@ -158,6 +158,21 @@ else
   say "  $(g '●') topics: all"
 fi
 
+# Install a /bits-topics slash command so topics can be changed anytime from
+# inside Claude Code (it just runs the client's --topics subcommand).
+CMD_DIR="$CLAUDE_DIR/commands"
+if mkdir -p "$CMD_DIR" 2>/dev/null; then
+  cat > "$CMD_DIR/bits-topics.md" <<'CMD'
+---
+description: Change your Diff Bits topics (e.g. /bits-topics ai,tech — or "all" for everything)
+argument-hint: "[topics]"
+---
+
+!`node ~/.the-diff/bits/bits.mjs --topics $ARGUMENTS`
+CMD
+  say "  $(g '●') /bits-topics command installed (change topics anytime)"
+fi
+
 # ── 5. Register the install (best-effort; never fails the install) ─────────
 OS=$(uname -s 2>/dev/null || echo unknown)
 ARCH=$(uname -m 2>/dev/null || echo unknown)
@@ -217,6 +232,8 @@ say ""
 say "  $(g '✓') Installed. Bits will appear in your Claude Code status line during wait states."
 say ""
 say "    $(bold 'Restart Claude Code') (or start a new session) to see it."
+say ""
+say "    Change topics anytime:  $(bold '/bits-topics ai,tech')  (or \"all\")"
 say ""
 say "    Uninstall anytime:"
 say "      curl -fsSL $BASE/uninstall.sh | sh"

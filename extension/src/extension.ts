@@ -10,7 +10,7 @@ import { randomUUID } from "crypto";
 // Supabase backend via /api/track and /c/[bitId]. Surface = "vscode".
 // ===========================================================================
 
-const CLIENT_VERSION = "0.2.2";
+const CLIENT_VERSION = "0.2.3";
 
 interface Bit {
   id: string;
@@ -34,7 +34,7 @@ interface Settings {
 }
 const DEFAULT_SETTINGS: Settings = {
   dwell_ms: 4000,
-  max_dwell_ms: 9000,
+  max_dwell_ms: 30000,
   refresh_min: 30,
   flush_threshold: 20,
 };
