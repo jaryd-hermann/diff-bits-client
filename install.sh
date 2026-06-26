@@ -16,7 +16,7 @@ BASE="${BASE%/}"
 # The client code is fetched from a PINNED commit/tag on GitHub — not from the
 # website — so what you run matches the public, auditable repo exactly. GH_REF
 # is stamped at release time; bits.the-diff.com/install.sh redirects here.
-GH_REF="client-v0.1.11"
+GH_REF="client-v0.1.12"
 GH_RAW="https://raw.githubusercontent.com/jaryd-hermann/diff-bits-client/${GH_REF}"
 REF="${DIFF_BITS_REF:-}"          # install source/campaign (the /install.sh route may inject this)
 DIR="${DIFF_BITS_DIR:-$HOME/.the-diff/bits}"
@@ -141,10 +141,11 @@ if [ -z "$TOPICS_CSV" ] && [ -r /dev/tty ]; then
   say "  $(bold 'Pick your topics') (press Enter for all):"
   say "    1) AI         2) Tech       3) Business   4) Startups"
   say "    5) Science    6) Finance    7) Politics   8) World"
+  say "    9) Product Hunt Launches"
   printf '  > e.g. 1,2,5 (Enter for all): '
   read -r PICK < /dev/tty || PICK=""
   TOPICS_CSV=$(node -e '
-    const map={1:"ai",2:"tech",3:"business",4:"startups",5:"science",6:"finance",7:"politics",8:"world"};
+    const map={1:"ai",2:"tech",3:"business",4:"startups",5:"science",6:"finance",7:"politics",8:"world",9:"producthunt"};
     const raw=(process.argv[1]||"").trim();
     if(!raw){process.stdout.write("");process.exit(0);}
     const out=[...new Set(raw.split(/[, ]+/).map(s=>map[s.trim()]||(Object.values(map).includes(s.trim())?s.trim():"")).filter(Boolean))];

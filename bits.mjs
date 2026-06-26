@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 
 // ── Config ────────────────────────────────────────────────────────────────
-const CLIENT_VERSION = "0.1.11";
+const CLIENT_VERSION = "0.1.12";
 const DEFAULT_BASE = "https://bits.the-diff.com";
 // DIFF_BITS_BASE_URL / DIFF_BITS_DIR let the test harness point elsewhere.
 const BASE = (process.env.DIFF_BITS_BASE_URL || DEFAULT_BASE).replace(/\/$/, "");
@@ -509,7 +509,7 @@ async function sync() {
 //   node bits.mjs --topics all        clear selection (= every topic)
 const TOPIC_SLUGS = [
   "ai", "tech", "business", "startups",
-  "science", "finance", "politics", "world",
+  "science", "finance", "politics", "world", "producthunt",
 ];
 
 function topicsCmd(arg) {
