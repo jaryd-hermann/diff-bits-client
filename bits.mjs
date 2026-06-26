@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 
 // ── Config ────────────────────────────────────────────────────────────────
-const CLIENT_VERSION = "0.1.12";
+const CLIENT_VERSION = "0.1.13";
 const DEFAULT_BASE = "https://bits.the-diff.com";
 // DIFF_BITS_BASE_URL / DIFF_BITS_DIR let the test harness point elsewhere.
 const BASE = (process.env.DIFF_BITS_BASE_URL || DEFAULT_BASE).replace(/\/$/, "");
@@ -43,6 +43,7 @@ const TOPICS_FILE = path.join(DIR, "topics"); // comma-separated; written at ins
 
 const MAX_QUEUE = 500; // cap pending events so an offline client can't grow unbounded
 const LIVE_GAP_MS = 12000; // gap larger than this => the session paused (closed/slept); must exceed statusLine refreshInterval (8s) so idle heartbeats still chain
+const AGENT_IDLE_MS = 900000; // pause counting after 15 min with no agent activity (reading still counts up to here); resume when the agent next works
 const MAX_COLS = 118; // keep the rendered line comfortably under a terminal width
 const MIN_BIT_COLS = 24; // never truncate a bit below this many visible chars
 const MARKER = "✱"; // heavy asterisk
@@ -138,10 +139,31 @@ function freshState() {
     bit_total_ms: 0, // attested on-screen time accrued for the current selection
     seg_accrued_ms: 0, // attested time in the current continuous segment (resets on gap)
     last_tick_at: null,
+    last_fp: null, // last agent-activity fingerprint (to detect when it changes)
+    last_active_at: null, // ms of the last tick the agent did work
     queue: [], // FIFO of pending {type, bit_id, ts, dwell_ms?}
     cc_version: null,
     shown_count: 0, // total bits shown — drives the 1-in-5 sponsor cadence
   };
+}
+
+// Agent-activity fingerprint: session usage fields that advance whenever Claude
+// Code does work (cost, tokens, context %). A CHANGE between ticks means the
+// agent just ran. We use this only to detect IDLE — counting keeps going for
+// AGENT_IDLE_MS after the last activity (so reading the agent's output counts),
+// then pauses until the agent runs again. Returns null if no field is present.
+function activityFingerprint(session) {
+  const cw = session?.context_window;
+  const parts = [
+    session?.cost?.total_cost_usd,
+    session?.cost?.total_api_duration_ms,
+    session?.cost?.total_lines_added,
+    session?.cost?.total_lines_removed,
+    cw?.total_input_tokens,
+    cw?.total_output_tokens,
+    cw?.used_percentage,
+  ].filter((v) => v !== undefined && v !== null);
+  return parts.length ? parts.join("|") : null;
 }
 
 // Begin showing `bit`: it's now the current selection with a fresh clock.
@@ -326,6 +348,18 @@ function hotPath() {
   //  • rotation is WALL-CLOCK: the line changes ~every max_dwell_ms since the
   //    bit first appeared, so it visibly cycles while Claude Code is
   //    re-rendering during a task — regardless of how bursty the renders are.
+
+  // Track agent activity to drive the 15-min idle pause. The agent "did work"
+  // when its usage fingerprint changes; we stamp last_active_at then. If the
+  // session exposes no usable signal at all, we can't detect idle, so we keep
+  // counting (don't pause).
+  const fp = activityFingerprint(session);
+  const agentActed = fp != null && fp !== state.last_fp;
+  if (agentActed || state.last_active_at == null) state.last_active_at = now;
+  const noSignal = fp == null && state.last_fp == null;
+  const agentLive =
+    noSignal || now - state.last_active_at <= AGENT_IDLE_MS;
+
   if (current) {
     const elapsed = state.last_tick_at ? now - state.last_tick_at : Infinity;
     // "continuous" = the session is live and ticking (event re-renders or the
@@ -339,13 +373,15 @@ function hotPath() {
       // First time we're showing this selection (e.g. migrated/old state).
       startSelection(state, current, now);
     } else {
-      // Credit every continuous tick — including idle refreshInterval ticks
-      // while you read output. Impression = time the bit is on a live session's
-      // screen, not only time the agent is actively working.
-      if (continuous) {
+      // Credit continuous on-screen time while the session is "live" — i.e. the
+      // agent has done work within the last AGENT_IDLE_MS. Reading the agent's
+      // output still counts (we don't require active work each tick); only a
+      // 15-min stretch with no agent activity pauses it, until the agent runs
+      // again. Idle pause does NOT stop the visual rotation below.
+      if (continuous && agentLive) {
         state.bit_total_ms += elapsed;
         state.seg_accrued_ms += elapsed;
-      } else {
+      } else if (!continuous) {
         state.seg_accrued_ms = 0; // session resumed after a gap; can't span it
       }
       // Rotate purely on wall-clock time since this bit became current.
@@ -359,6 +395,7 @@ function hotPath() {
   }
 
   state.last_tick_at = now;
+  state.last_fp = fp;
   writeJsonAtomic(STATE_FILE, state);
 
   // Compose the line.
